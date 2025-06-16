@@ -22,7 +22,8 @@ class CouponScraper:
         """Save scraped data to MongoDB"""
         try:
             client = pymongo.MongoClient(self.mongodb_uri)
-            db = client.get_default_database()
+            # db = client.get_default_database()
+            db = client['coupon_db']
             collection = db.couponshops
 
             print('Connected to MongoDB using PyMongo')
