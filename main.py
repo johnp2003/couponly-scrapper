@@ -18,7 +18,7 @@ class CouponScraper:
         self.gemini_api_key = os.getenv('GEMINI_API_KEY')
         self.shop_results = {}
         self.processed_shops = set()
-        self.max_shops = 5  # Testing with 10 shops only
+        self.max_shops = 500  # Testing with 10 shops only
 
         # Configure Gemini
         if self.gemini_api_key:
