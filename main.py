@@ -23,7 +23,7 @@ class CouponScraper:
         # Configure Gemini
         if self.gemini_api_key:
             genai.configure(api_key=self.gemini_api_key)
-            self.model = genai.GenerativeModel('gemini-pro')
+            self.model = genai.GenerativeModel('gemini-1.5-flash')
         else:
             raise ValueError("GEMINI_API_KEY not found in environment variables")
 
@@ -35,12 +35,13 @@ class CouponScraper:
 
             prompt = f"""Categorize these shop names into one of these categories: Food & Drink, Fashion, Tech, Beauty, Home & Living, Travel.
 
-Shop names: {shop_list}
+    Shop names: {shop_list}
 
-Return only a JSON object mapping each shop name to its category. Example format:
-{{"ShopName1": "Fashion", "ShopName2": "Travel"}}"""
+    Return only a JSON object mapping each shop name to its category. Example format:
+    {{"ShopName1": "Fashion", "ShopName2": "Travel"}}"""
 
             response = self.model.generate_content(prompt)
+            print(response.text)  # Log the raw response for debugging
 
             # Parse the JSON response
             try:
@@ -52,6 +53,7 @@ Return only a JSON object mapping each shop name to its category. Example format
                     response_text = response_text.replace('```', '').strip()
 
                 categories = json.loads(response_text)
+
                 print(f"Successfully categorized {len(categories)} shops with Gemini")
                 return categories
 
@@ -86,8 +88,12 @@ Return only a JSON object mapping each shop name to its category. Example format
             # Prepare shop documents with categories
             shop_documents = []
             for shop_name, shop_data in data.items():
-                # Get category from Gemini response, default to 'E-commerce' if not found
-                category = shop_categories.get(shop_name, 'E-commerce')
+                # Check if the shop has a category from Gemini response
+                category = shop_categories.get(shop_name)
+
+                if category is None:  # If no category found, skip this shop or handle differently
+                    print(f"Skipping shop '{shop_name}' due to missing category.")
+                    continue  # Skip this shop
 
                 # Add category to each coupon
                 categorized_coupons = []
@@ -99,7 +105,7 @@ Return only a JSON object mapping each shop name to its category. Example format
                 shop_doc = {
                     'shopName': shop_name,
                     'imageUrl': shop_data['imageUrl'],
-                    'category': category,
+                    'category': category,  # Only add category if it's valid
                     'coupons': categorized_coupons,
                     'timestamp': datetime.now()
                 }
@@ -107,8 +113,11 @@ Return only a JSON object mapping each shop name to its category. Example format
                 print(f"Shop: {shop_name} -> Category: {category} ({len(categorized_coupons)} coupons)")
 
             # Insert shops data
-            result = collection.insert_many(shop_documents)
-            print(f'{len(result.inserted_ids)} shops with categorized coupons saved to MongoDB')
+            if shop_documents:
+                result = collection.insert_many(shop_documents)
+                print(f'{len(result.inserted_ids)} shops with categorized coupons saved to MongoDB')
+            else:
+                print("No shops were categorized or saved to MongoDB.")
 
         except Exception as e:
             print(f'Error saving to MongoDB: {e}')
