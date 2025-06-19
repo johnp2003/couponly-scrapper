@@ -33,7 +33,7 @@ class CouponScraper:
             # Create a minimal prompt for cost efficiency
             shop_list = ", ".join(shop_names)
 
-            prompt = f"""Categorize these shop names into one of these categories: Food & Drink, Fashion, Tech, Beauty, Home & Living, Travel.
+            prompt = f"""Categorize these shop names into one of these categories: Food & Drink, Fashion, Tech, Beauty, Home & Living, Travel, E-commerce.
 
     Shop names: {shop_list}
 
