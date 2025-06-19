@@ -31,3 +31,4 @@ jobs:
         run: python main.py
         env:
           MONGODB_URI: ${{ secrets.MONGODB_URI }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
