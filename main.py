@@ -6,6 +6,7 @@ from typing import Dict, List, Set
 import pymongo
 from playwright.async_api import async_playwright
 from dotenv import load_dotenv
+import google.generativeai as genai
 
 # Load environment variables
 load_dotenv()
@@ -14,15 +15,59 @@ load_dotenv()
 class CouponScraper:
     def __init__(self):
         self.mongodb_uri = os.getenv('MONGODB_URI')
+        self.gemini_api_key = os.getenv('GEMINI_API_KEY')
         self.shop_results = {}
         self.processed_shops = set()
-        self.max_shops = 300
+        self.max_shops = 10  # Testing with 10 shops only
+
+        # Configure Gemini
+        if self.gemini_api_key:
+            genai.configure(api_key=self.gemini_api_key)
+            self.model = genai.GenerativeModel('gemini-pro')
+        else:
+            raise ValueError("GEMINI_API_KEY not found in environment variables")
+
+    def categorize_shops_with_gemini(self, shop_names: List[str]) -> Dict[str, str]:
+        """Categorize shop names using Google Gemini"""
+        try:
+            # Create a minimal prompt for cost efficiency
+            shop_list = ", ".join(shop_names)
+
+            prompt = f"""Categorize these shop names into one of these categories: Food & Drink, Fashion, Tech, Beauty, Home & Living, Travel, E-commerce.
+
+Shop names: {shop_list}
+
+Return only a JSON object mapping each shop name to its category. Example format:
+{{"ShopName1": "Fashion", "ShopName2": "Travel"}}"""
+
+            response = self.model.generate_content(prompt)
+
+            # Parse the JSON response
+            try:
+                # Clean the response text to extract JSON
+                response_text = response.text.strip()
+                if response_text.startswith('```json'):
+                    response_text = response_text.replace('```json', '').replace('```', '').strip()
+                elif response_text.startswith('```'):
+                    response_text = response_text.replace('```', '').strip()
+
+                categories = json.loads(response_text)
+                print(f"Successfully categorized {len(categories)} shops with Gemini")
+                return categories
+
+            except json.JSONDecodeError as e:
+                print(f"Error parsing Gemini response as JSON: {e}")
+                print(f"Raw response: {response.text}")
+                return {}
+
+        except Exception as e:
+            print(f"Error categorizing shops with Gemini: {e}")
+            return {}
 
     async def save_to_mongodb(self, data: Dict):
         """Save scraped data to MongoDB"""
         try:
             client = pymongo.MongoClient(self.mongodb_uri)
-            # db = client.get_default_database()
             db = client['coupon_db']
             collection = db.couponshops
 
@@ -31,20 +76,39 @@ class CouponScraper:
             # Clear existing data
             collection.delete_many({})
 
-            # Prepare shop documents
+            # Get shop names for categorization
+            shop_names = list(data.keys())
+            print(f"Categorizing {len(shop_names)} shops with Gemini...")
+
+            # Categorize shops using Gemini
+            shop_categories = self.categorize_shops_with_gemini(shop_names)
+
+            # Prepare shop documents with categories
             shop_documents = []
             for shop_name, shop_data in data.items():
+                # Get category from Gemini response, default to 'E-commerce' if not found
+                category = shop_categories.get(shop_name, 'E-commerce')
+
+                # Add category to each coupon
+                categorized_coupons = []
+                for coupon in shop_data['coupons']:
+                    coupon_with_category = coupon.copy()
+                    coupon_with_category['category'] = category
+                    categorized_coupons.append(coupon_with_category)
+
                 shop_doc = {
                     'shopName': shop_name,
                     'imageUrl': shop_data['imageUrl'],
-                    'coupons': shop_data['coupons'],
+                    'category': category,
+                    'coupons': categorized_coupons,
                     'timestamp': datetime.now()
                 }
                 shop_documents.append(shop_doc)
+                print(f"Shop: {shop_name} -> Category: {category} ({len(categorized_coupons)} coupons)")
 
             # Insert shops data
             result = collection.insert_many(shop_documents)
-            print(f'{len(result.inserted_ids)} shops with coupons saved to MongoDB')
+            print(f'{len(result.inserted_ids)} shops with categorized coupons saved to MongoDB')
 
         except Exception as e:
             print(f'Error saving to MongoDB: {e}')
@@ -442,7 +506,7 @@ class CouponScraper:
                         print('No new shops to process, exiting...')
                         break
 
-                # Save to JSON file
+                # Save to JSON file (with categories)
                 with open('cuponation_coupons.json', 'w', encoding='utf-8') as f:
                     json.dump(self.shop_results, f, indent=2, ensure_ascii=False)
 
@@ -472,7 +536,7 @@ async def main():
         results = await scraper.scrape_coupons()
         print(f'Scraping finished with data for {len(results)} shops.')
 
-        # Save to MongoDB
+        # Save to MongoDB with categorization
         await scraper.save_to_mongodb(results)
 
     except Exception as e:
