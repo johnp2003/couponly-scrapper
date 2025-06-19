@@ -18,7 +18,7 @@ class CouponScraper:
         self.gemini_api_key = os.getenv('GEMINI_API_KEY')
         self.shop_results = {}
         self.processed_shops = set()
-        self.max_shops = 10  # Testing with 10 shops only
+        self.max_shops = 5  # Testing with 10 shops only
 
         # Configure Gemini
         if self.gemini_api_key:
@@ -33,7 +33,7 @@ class CouponScraper:
             # Create a minimal prompt for cost efficiency
             shop_list = ", ".join(shop_names)
 
-            prompt = f"""Categorize these shop names into one of these categories: Food & Drink, Fashion, Tech, Beauty, Home & Living, Travel, E-commerce.
+            prompt = f"""Categorize these shop names into one of these categories: Food & Drink, Fashion, Tech, Beauty, Home & Living, Travel.
 
 Shop names: {shop_list}
 
