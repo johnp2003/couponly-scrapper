@@ -36,7 +36,7 @@ class CouponScraper:
             raise ValueError("GEMINI_API_KEY not found in environment variables")
 
     def clean_expiry_date(self, expiry_text: str) -> str:
-        """Clean expiry date by removing 'Expiry' prefix and extra whitespace"""
+        """Clean expiry date by removing 'Expiry' prefix and converting to ISO format"""
         if not expiry_text or expiry_text == 'No expiry date found':
             return None
 
@@ -50,7 +50,37 @@ class CouponScraper:
         if not cleaned:
             return None
 
-        return cleaned
+        # Try to parse and convert common date formats to ISO format (YYYY-MM-DD)
+        try:
+            # Common date formats to try
+            date_formats = [
+                '%d/%m/%Y',    # 31/12/2025
+                '%d-%m-%Y',    # 31-12-2025
+                '%d.%m.%Y',    # 31.12.2025
+                '%Y-%m-%d',    # 2025-12-31 (already ISO)
+                '%d %B %Y',    # 31 December 2025
+                '%d %b %Y',    # 31 Dec 2025
+                '%B %d, %Y',   # December 31, 2025
+                '%b %d, %Y',   # Dec 31, 2025
+            ]
+
+            for date_format in date_formats:
+                try:
+                    parsed_date = datetime.strptime(cleaned, date_format)
+                    # Convert to ISO format (YYYY-MM-DD)
+                    iso_date = parsed_date.strftime('%Y-%m-%d')
+                    print(f"Successfully converted date '{cleaned}' to ISO format: {iso_date}")
+                    return iso_date
+                except ValueError:
+                    continue
+
+            # If no format matches, log and return None
+            print(f"Could not parse date format: '{cleaned}'. Skipping this date.")
+            return None
+
+        except Exception as e:
+            print(f"Error processing date '{cleaned}': {e}")
+            return None
 
     def categorize_shops_with_gemini(self, shop_names: List[str]) -> Dict[str, str]:
         """Categorize shop names using Google Gemini"""
