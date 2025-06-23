@@ -3,7 +3,7 @@ import json
 import os
 from datetime import datetime
 from typing import Dict, List, Set
-import pymongo
+from supabase import create_client, Client
 from playwright.async_api import async_playwright
 from dotenv import load_dotenv
 import google.generativeai as genai
@@ -14,11 +14,18 @@ load_dotenv()
 
 class CouponScraper:
     def __init__(self):
-        self.mongodb_uri = os.getenv('MONGODB_URI')
+        self.supabase_url = os.getenv('SUPABASE_URL')
+        self.supabase_key = os.getenv('SUPABASE_ANON_KEY')
         self.gemini_api_key = os.getenv('GEMINI_API_KEY')
         self.shop_results = {}
         self.processed_shops = set()
         self.max_shops = 500  # Testing with 10 shops only
+
+        # Initialize Supabase client
+        if self.supabase_url and self.supabase_key:
+            self.supabase: Client = create_client(self.supabase_url, self.supabase_key)
+        else:
+            raise ValueError("SUPABASE_URL and SUPABASE_ANON_KEY must be provided in environment variables")
 
         # Configure Gemini
         if self.gemini_api_key:
@@ -66,17 +73,23 @@ class CouponScraper:
             print(f"Error categorizing shops with Gemini: {e}")
             return {}
 
-    async def save_to_mongodb(self, data: Dict):
-        """Save scraped data to MongoDB"""
+    async def save_to_supabase(self, data: Dict):
+        """Save scraped data to Supabase"""
         try:
-            client = pymongo.MongoClient(self.mongodb_uri)
-            db = client['coupon_db']
-            collection = db.couponshops
-
-            print('Connected to MongoDB using PyMongo')
+            print('Connected to Supabase')
 
             # Clear existing data
-            collection.delete_many({})
+            print('Clearing existing data...')
+
+            # Delete all coupons first (due to foreign key constraints)
+            delete_coupons_result = self.supabase.table('coupons').delete().neq('id',
+                                                                                '00000000-0000-0000-0000-000000000000').execute()
+            print(f'Deleted existing coupons: {len(delete_coupons_result.data) if delete_coupons_result.data else 0}')
+
+            # Delete all shops
+            delete_shops_result = self.supabase.table('shops').delete().neq('id',
+                                                                            '00000000-0000-0000-0000-000000000000').execute()
+            print(f'Deleted existing shops: {len(delete_shops_result.data) if delete_shops_result.data else 0}')
 
             # Get shop names for categorization
             shop_names = list(data.keys())
@@ -85,45 +98,72 @@ class CouponScraper:
             # Categorize shops using Gemini
             shop_categories = self.categorize_shops_with_gemini(shop_names)
 
-            # Prepare shop documents with categories
-            shop_documents = []
+            # Insert shops and coupons
+            shops_inserted = 0
+            coupons_inserted = 0
+
             for shop_name, shop_data in data.items():
                 # Check if the shop has a category from Gemini response
                 category = shop_categories.get(shop_name)
 
-                if category is None:  # If no category found, skip this shop or handle differently
+                if category is None:  # If no category found, skip this shop
                     print(f"Skipping shop '{shop_name}' due to missing category.")
-                    continue  # Skip this shop
+                    continue
 
-                # Add category to each coupon
-                categorized_coupons = []
-                for coupon in shop_data['coupons']:
-                    coupon_with_category = coupon.copy()
-                    coupon_with_category['category'] = category
-                    categorized_coupons.append(coupon_with_category)
+                try:
+                    # Insert shop into shops table
+                    shop_insert_data = {
+                        'name': shop_name,
+                        'image_url': shop_data['imageUrl'],
+                        'category': category
+                    }
 
-                shop_doc = {
-                    'shopName': shop_name,
-                    'imageUrl': shop_data['imageUrl'],
-                    'category': category,  # Only add category if it's valid
-                    'coupons': categorized_coupons,
-                    'timestamp': datetime.now()
-                }
-                shop_documents.append(shop_doc)
-                print(f"Shop: {shop_name} -> Category: {category} ({len(categorized_coupons)} coupons)")
+                    shop_result = self.supabase.table('shops').insert(shop_insert_data).execute()
 
-            # Insert shops data
-            if shop_documents:
-                result = collection.insert_many(shop_documents)
-                print(f'{len(result.inserted_ids)} shops with categorized coupons saved to MongoDB')
-            else:
-                print("No shops were categorized or saved to MongoDB.")
+                    if shop_result.data and len(shop_result.data) > 0:
+                        shop_id = shop_result.data[0]['id']
+                        shops_inserted += 1
+                        print(f"Inserted shop: {shop_name} -> Category: {category} (ID: {shop_id})")
+
+                        # Insert coupons for this shop
+                        coupon_data_list = []
+                        for coupon in shop_data['coupons']:
+                            coupon_insert_data = {
+                                'shop_id': shop_id,
+                                'title': coupon.get('title', 'No title'),
+                                'code': coupon.get('code', 'No code'),
+                                'description': coupon.get('description', 'No description'),
+                                'terms_and_conditions': coupon.get('termsAndConditions', 'No terms and conditions'),
+                                'expiry_date': coupon.get('expiryDate', 'No expiry date'),
+                                'source_url': coupon.get('url', ''),
+                                'category': category,
+                                'is_active': True
+                            }
+                            coupon_data_list.append(coupon_insert_data)
+
+                        # Batch insert coupons if any exist
+                        if coupon_data_list:
+                            coupons_result = self.supabase.table('coupons').insert(coupon_data_list).execute()
+
+                            if coupons_result.data:
+                                coupons_count = len(coupons_result.data)
+                                coupons_inserted += coupons_count
+                                print(f"Inserted {coupons_count} coupons for {shop_name}")
+                            else:
+                                print(f"Failed to insert coupons for {shop_name}")
+                        else:
+                            print(f"No coupons to insert for {shop_name}")
+                    else:
+                        print(f"Failed to insert shop: {shop_name}")
+
+                except Exception as e:
+                    print(f"Error inserting shop '{shop_name}': {e}")
+                    continue
+
+            print(f'Successfully saved {shops_inserted} shops and {coupons_inserted} coupons to Supabase')
 
         except Exception as e:
-            print(f'Error saving to MongoDB: {e}')
-        finally:
-            client.close()
-            print('MongoDB connection closed')
+            print(f'Error saving to Supabase: {e}')
 
     async def scrape_coupons(self):
         """Main scraping function"""
@@ -545,8 +585,8 @@ async def main():
         results = await scraper.scrape_coupons()
         print(f'Scraping finished with data for {len(results)} shops.')
 
-        # Save to MongoDB with categorization
-        await scraper.save_to_mongodb(results)
+        # Save to Supabase with categorization
+        await scraper.save_to_supabase(results)
 
     except Exception as e:
         print(f'Scraping failed: {e}')
