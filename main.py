@@ -7,6 +7,7 @@ from supabase import create_client, Client
 from playwright.async_api import async_playwright
 from dotenv import load_dotenv
 import google.generativeai as genai
+import re
 
 # Load environment variables
 load_dotenv()
@@ -33,6 +34,23 @@ class CouponScraper:
             self.model = genai.GenerativeModel('gemini-1.5-flash')
         else:
             raise ValueError("GEMINI_API_KEY not found in environment variables")
+
+    def clean_expiry_date(self, expiry_text: str) -> str:
+        """Clean expiry date by removing 'Expiry' prefix and extra whitespace"""
+        if not expiry_text or expiry_text == 'No expiry date found':
+            return None
+
+        # Remove 'Expiry' prefix (case insensitive)
+        cleaned = re.sub(r'^expiry\s*', '', expiry_text.strip(), flags=re.IGNORECASE)
+
+        # Remove any extra whitespace
+        cleaned = cleaned.strip()
+
+        # If nothing left after cleaning, return None
+        if not cleaned:
+            return None
+
+        return cleaned
 
     def categorize_shops_with_gemini(self, shop_names: List[str]) -> Dict[str, str]:
         """Categorize shop names using Google Gemini"""
@@ -128,13 +146,17 @@ class CouponScraper:
                         # Insert coupons for this shop
                         coupon_data_list = []
                         for coupon in shop_data['coupons']:
+                            # Clean the expiry date
+                            raw_expiry = coupon.get('expiryDate', 'No expiry date')
+                            cleaned_expiry = self.clean_expiry_date(raw_expiry)
+
                             coupon_insert_data = {
                                 'shop_id': shop_id,
                                 'title': coupon.get('title', 'No title'),
                                 'code': coupon.get('code', 'No code'),
                                 'description': coupon.get('description', 'No description'),
                                 'terms_and_conditions': coupon.get('termsAndConditions', 'No terms and conditions'),
-                                'expiry_date': coupon.get('expiryDate', 'No expiry date'),
+                                'expiry_date': cleaned_expiry,  # Use cleaned expiry date
                                 'source_url': coupon.get('url', ''),
                                 'category': category,
                                 'is_active': True
@@ -337,8 +359,11 @@ class CouponScraper:
                                             try:
                                                 is_visible = await expiry_element.is_visible()
                                                 if is_visible:
-                                                    expiry_date = await expiry_element.inner_text()
-                                                    print(f'Found expiry date: {expiry_date}')
+                                                    raw_expiry = await expiry_element.inner_text()
+                                                    # Clean the expiry date here during scraping
+                                                    expiry_date = self.clean_expiry_date(
+                                                        raw_expiry) or 'No expiry date found'
+                                                    print(f'Found and cleaned expiry date: {expiry_date}')
                                                     break
                                             except:
                                                 continue
