@@ -1,13 +1,13 @@
 import asyncio
 import json
 import os
+import re
 from datetime import datetime
 from typing import Dict, List, Set
 from supabase import create_client, Client
 from playwright.async_api import async_playwright
 from dotenv import load_dotenv
 import google.generativeai as genai
-import re
 
 # Load environment variables
 load_dotenv()
@@ -35,6 +35,23 @@ class CouponScraper:
         else:
             raise ValueError("GEMINI_API_KEY not found in environment variables")
 
+    def clean_title_text(self, title_text: str) -> str:
+        """Clean title text by removing extra whitespace and newlines"""
+        if not title_text:
+            return 'No title'
+
+        # Remove extra whitespace, newlines, and tabs
+        cleaned = re.sub(r'\s+', ' ', title_text.strip())
+
+        # Remove any remaining line breaks
+        cleaned = cleaned.replace('\n', ' ').replace('\r', ' ')
+
+        # Trim extra spaces
+        cleaned = ' '.join(cleaned.split())
+
+        print(f"Cleaned title: '{title_text}' -> '{cleaned}'")
+        return cleaned if cleaned else 'No title'
+
     def clean_expiry_date(self, expiry_text: str) -> str:
         """Clean expiry date by removing 'Expiry' prefix and converting to ISO format"""
         if not expiry_text or expiry_text == 'No expiry date found':
@@ -54,14 +71,14 @@ class CouponScraper:
         try:
             # Common date formats to try
             date_formats = [
-                '%d/%m/%Y',    # 31/12/2025
-                '%d-%m-%Y',    # 31-12-2025
-                '%d.%m.%Y',    # 31.12.2025
-                '%Y-%m-%d',    # 2025-12-31 (already ISO)
-                '%d %B %Y',    # 31 December 2025
-                '%d %b %Y',    # 31 Dec 2025
-                '%B %d, %Y',   # December 31, 2025
-                '%b %d, %Y',   # Dec 31, 2025
+                '%d/%m/%Y',  # 31/12/2025
+                '%d-%m-%Y',  # 31-12-2025
+                '%d.%m.%Y',  # 31.12.2025
+                '%Y-%m-%d',  # 2025-12-31 (already ISO)
+                '%d %B %Y',  # 31 December 2025
+                '%d %b %Y',  # 31 Dec 2025
+                '%B %d, %Y',  # December 31, 2025
+                '%b %d, %Y',  # Dec 31, 2025
             ]
 
             for date_format in date_formats:
@@ -180,9 +197,13 @@ class CouponScraper:
                             raw_expiry = coupon.get('expiryDate', 'No expiry date')
                             cleaned_expiry = self.clean_expiry_date(raw_expiry)
 
+                            # Clean the title using the new method
+                            raw_title = coupon.get('title', 'No title')
+                            cleaned_title = self.clean_title_text(raw_title)
+
                             coupon_insert_data = {
                                 'shop_id': shop_id,
-                                'title': coupon.get('title', 'No title'),
+                                'title': cleaned_title,  # Use cleaned title
                                 'code': coupon.get('code', 'No code'),
                                 'description': coupon.get('description', 'No description'),
                                 'terms_and_conditions': coupon.get('termsAndConditions', 'No terms and conditions'),
@@ -369,8 +390,10 @@ class CouponScraper:
                                         title_div = title_locator.first
                                         is_visible = await title_div.is_visible()
                                         if is_visible:
-                                            code_title = await title_div.inner_text()
-                                            print(f'Found code title: {code_title}')
+                                            raw_title = await title_div.inner_text()
+                                            # Clean the title immediately after extraction
+                                            code_title = self.clean_title_text(raw_title)
+                                            print(f'Found and cleaned code title: {code_title}')
                                     except Exception as e:
                                         print('Error extracting code title:', e)
 
