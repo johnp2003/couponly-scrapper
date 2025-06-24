@@ -138,105 +138,142 @@ class CouponScraper:
             print(f"Error categorizing shops with Gemini: {e}")
             return {}
 
-    async def save_to_supabase(self, data: Dict):
-        """Save scraped data to Supabase"""
+    async def save_to_supabase_stable(self, data: Dict):
+        """Save scraped data to Supabase using stable coupon matching (Approach 1)"""
         try:
-            print('Connected to Supabase')
+            print('🔗 Connected to Supabase')
 
-            # Clear existing data
-            print('Clearing existing data...')
+            # Step 1: Mark all existing coupons as inactive
+            print('🔄 Marking existing coupons as inactive...')
+            inactive_result = self.supabase.rpc('mark_all_coupons_inactive').execute()
+            inactive_count = inactive_result.data if inactive_result.data else 0
+            print(f'📝 Marked {inactive_count} coupons as inactive')
 
-            # Delete all coupons first (due to foreign key constraints)
-            delete_coupons_result = self.supabase.table('coupons').delete().neq('id',
-                                                                                '00000000-0000-0000-0000-000000000000').execute()
-            print(f'Deleted existing coupons: {len(delete_coupons_result.data) if delete_coupons_result.data else 0}')
-
-            # Delete all shops
-            delete_shops_result = self.supabase.table('shops').delete().neq('id',
-                                                                            '00000000-0000-0000-0000-000000000000').execute()
-            print(f'Deleted existing shops: {len(delete_shops_result.data) if delete_shops_result.data else 0}')
-
-            # Get shop names for categorization
+            # Step 2: Get shop categories from Gemini
             shop_names = list(data.keys())
-            print(f"Categorizing {len(shop_names)} shops with Gemini...")
-
-            # Categorize shops using Gemini
+            print(f"🤖 Categorizing {len(shop_names)} shops with Gemini...")
             shop_categories = self.categorize_shops_with_gemini(shop_names)
 
-            # Insert shops and coupons
-            shops_inserted = 0
-            coupons_inserted = 0
+            # Step 3: Process shops and coupons with upsert strategy
+            shops_upserted = 0
+            coupons_upserted = 0
+            coupons_updated = 0
+            coupons_created = 0
+            coupons_skipped_duplicates = 0
 
             for shop_name, shop_data in data.items():
-                # Check if the shop has a category from Gemini response
                 category = shop_categories.get(shop_name)
-
-                if category is None:  # If no category found, skip this shop
-                    print(f"Skipping shop '{shop_name}' due to missing category.")
+                if not category:
+                    print(f"⚠️ Skipping shop '{shop_name}' due to missing category.")
                     continue
 
                 try:
-                    # Insert shop into shops table
-                    shop_insert_data = {
-                        'name': shop_name,
-                        'image_url': shop_data['imageUrl'],
-                        'category': category
-                    }
+                    # Upsert shop using the new function
+                    shop_result = self.supabase.rpc('upsert_shop', {
+                        'p_name': shop_name,
+                        'p_image_url': shop_data['imageUrl'],
+                        'p_category': category
+                    }).execute()
 
-                    shop_result = self.supabase.table('shops').insert(shop_insert_data).execute()
+                    if shop_result.data:
+                        shop_id = shop_result.data
+                        shops_upserted += 1
+                        print(f"🏪 Upserted shop: {shop_name} -> Category: {category}")
 
-                    if shop_result.data and len(shop_result.data) > 0:
-                        shop_id = shop_result.data[0]['id']
-                        shops_inserted += 1
-                        print(f"Inserted shop: {shop_name} -> Category: {category} (ID: {shop_id})")
+                        # Track processed coupons for this shop to prevent duplicates
+                        processed_coupon_keys = set()
 
-                        # Insert coupons for this shop
-                        coupon_data_list = []
+                        # Process coupons for this shop
                         for coupon in shop_data['coupons']:
-                            # Clean the expiry date
-                            raw_expiry = coupon.get('expiryDate', 'No expiry date')
-                            cleaned_expiry = self.clean_expiry_date(raw_expiry)
+                            # Clean the data
+                            cleaned_expiry = self.clean_expiry_date(coupon.get('expiryDate', ''))
+                            cleaned_title = self.clean_title_text(coupon.get('title', ''))
+                            cleaned_code = coupon.get('code', 'No code').strip()
 
-                            # Clean the title using the new method
-                            raw_title = coupon.get('title', 'No title')
-                            cleaned_title = self.clean_title_text(raw_title)
+                            # Create a unique key for this coupon (shop_id, code, title)
+                            coupon_key = (shop_id, cleaned_code.lower(), cleaned_title.lower())
 
-                            coupon_insert_data = {
-                                'shop_id': shop_id,
-                                'title': cleaned_title,  # Use cleaned title
-                                'code': coupon.get('code', 'No code'),
-                                'description': coupon.get('description', 'No description'),
-                                'terms_and_conditions': coupon.get('termsAndConditions', 'No terms and conditions'),
-                                'expiry_date': cleaned_expiry,  # Use cleaned expiry date
-                                'source_url': coupon.get('url', ''),
-                                'category': category,
-                                'is_active': True
-                            }
-                            coupon_data_list.append(coupon_insert_data)
+                            # Skip if we've already processed this exact coupon for this shop
+                            if coupon_key in processed_coupon_keys:
+                                coupons_skipped_duplicates += 1
+                                print(f"⚠️ Skipping duplicate coupon: {cleaned_title} (Code: {cleaned_code})")
+                                continue
 
-                        # Batch insert coupons if any exist
-                        if coupon_data_list:
-                            coupons_result = self.supabase.table('coupons').insert(coupon_data_list).execute()
+                            # Add to processed set
+                            processed_coupon_keys.add(coupon_key)
 
-                            if coupons_result.data:
-                                coupons_count = len(coupons_result.data)
-                                coupons_inserted += coupons_count
-                                print(f"Inserted {coupons_count} coupons for {shop_name}")
+                            # Check if this is an existing coupon by trying to find it first
+                            existing_coupon = self.supabase.table('coupons').select('id').eq('shop_id', shop_id).eq(
+                                'code', cleaned_code).eq('title', cleaned_title).execute()
+
+                            is_update = existing_coupon.data and len(existing_coupon.data) > 0
+
+                            # Upsert coupon using the new function
+                            coupon_result = self.supabase.rpc('upsert_coupon', {
+                                'p_shop_id': shop_id,
+                                'p_title': cleaned_title,
+                                'p_code': cleaned_code,
+                                'p_description': coupon.get('description', 'No description'),
+                                'p_terms_and_conditions': coupon.get('termsAndConditions', 'No terms and conditions'),
+                                'p_expiry_date': cleaned_expiry,
+                                'p_source_url': coupon.get('url', ''),
+                                'p_category': category,
+                                'p_coupon_image_url': coupon.get('couponImageUrl', '')
+                            }).execute()
+
+                            if coupon_result.data:
+                                coupons_upserted += 1
+                                if is_update:
+                                    coupons_updated += 1
+                                    print(f"🔄 Updated existing coupon: {cleaned_title}")
+                                else:
+                                    coupons_created += 1
+                                    print(f"✨ Created new coupon: {cleaned_title}")
                             else:
-                                print(f"Failed to insert coupons for {shop_name}")
-                        else:
-                            print(f"No coupons to insert for {shop_name}")
+                                print(f"❌ Failed to upsert coupon: {cleaned_title}")
+
                     else:
-                        print(f"Failed to insert shop: {shop_name}")
+                        print(f"❌ Failed to upsert shop: {shop_name}")
 
                 except Exception as e:
-                    print(f"Error inserting shop '{shop_name}': {e}")
+                    print(f"❌ Error processing shop '{shop_name}': {e}")
                     continue
 
-            print(f'Successfully saved {shops_inserted} shops and {coupons_inserted} coupons to Supabase')
+            # Step 4: Clean up orphaned inactive coupons
+            print('🧹 Cleaning up inactive coupons...')
+            cleanup_result = self.supabase.rpc('cleanup_inactive_coupons').execute()
+
+            if cleanup_result.data:
+                deleted_count = cleanup_result.data[0]['deleted_count']
+                preserved_count = cleanup_result.data[0]['preserved_count']
+                print(f'🗑️ Deleted {deleted_count} inactive coupons')
+                print(f'🔒 Preserved {preserved_count} inactive coupons (user references)')
+
+            # Step 5: Get final statistics
+            stats_result = self.supabase.rpc('get_scraping_stats').execute()
+            if stats_result.data:
+                stats = stats_result.data[0]
+                print(f"""
+📊 SCRAPING SUMMARY:
+   🏪 Shops processed: {shops_upserted}
+   🎫 Coupons processed: {coupons_upserted}
+   ✨ New coupons: {coupons_created}
+   🔄 Updated coupons: {coupons_updated}
+   ⚠️ Skipped duplicates: {coupons_skipped_duplicates}
+
+📈 DATABASE TOTALS:
+   🏪 Total shops: {stats['total_shops']}
+   🎫 Total coupons: {stats['total_coupons']}
+   ✅ Active coupons: {stats['active_coupons']}
+   ❌ Inactive coupons: {stats['inactive_coupons']}
+   👤 User saved (public): {stats['user_saved_public_coupons']}
+   👤 User saved (private): {stats['user_saved_private_coupons']}
+                """)
+
+            print('✅ Successfully completed stable coupon matching!')
 
         except Exception as e:
-            print(f'Error saving to Supabase: {e}')
+            print(f'❌ Error during stable save to Supabase: {e}')
 
     async def scrape_coupons(self):
         """Main scraping function"""
@@ -663,8 +700,8 @@ async def main():
         results = await scraper.scrape_coupons()
         print(f'Scraping finished with data for {len(results)} shops.')
 
-        # Save to Supabase with categorization
-        await scraper.save_to_supabase(results)
+        # Use the new stable save method (Approach 1)
+        await scraper.save_to_supabase_stable(results)
 
     except Exception as e:
         print(f'Scraping failed: {e}')
