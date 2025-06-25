@@ -20,7 +20,7 @@ class CouponScraper:
         self.gemini_api_key = os.getenv('GEMINI_API_KEY')
         self.shop_results = {}
         self.processed_shops = set()
-        self.max_shops = 10  # Testing with 10 shops only
+        self.max_shops = 20  # Testing with 10 shops only
 
         # Initialize Supabase client
         if self.supabase_url and self.supabase_key:
@@ -40,16 +40,24 @@ class CouponScraper:
         if not title_text:
             return 'No title'
 
-        # Remove extra whitespace, newlines, and tabs
-        cleaned = re.sub(r'\s+', ' ', title_text.strip())
+        # Step 1: Replace all Unicode whitespace characters with regular spaces
+        # This includes regular spaces, newlines, tabs, non-breaking spaces, etc.
+        cleaned = re.sub(r'\s+', ' ', title_text, flags=re.UNICODE)
 
-        # Remove any remaining line breaks
-        cleaned = cleaned.replace('\n', ' ').replace('\r', ' ')
+        # Step 2: Handle any remaining non-breaking spaces or special characters
+        cleaned = cleaned.replace('\u00A0', ' ')  # Non-breaking space
+        cleaned = cleaned.replace('\u2009', ' ')  # Thin space
+        cleaned = cleaned.replace('\u200B', '')  # Zero-width space (remove entirely)
 
-        # Trim extra spaces
-        cleaned = ' '.join(cleaned.split())
+        # Step 3: Clean up multiple spaces that might have been created
+        cleaned = re.sub(r' +', ' ', cleaned)
 
-        print(f"Cleaned title: '{title_text}' -> '{cleaned}'")
+        # Step 4: Strip leading and trailing whitespace
+        cleaned = cleaned.strip()
+
+        print(f"Original: {repr(title_text)}")
+        print(f"Cleaned:  {repr(cleaned)}")
+        print(f"Result:   '{cleaned}'")
         return cleaned if cleaned else 'No title'
 
     def clean_expiry_date(self, expiry_text: str) -> str:
