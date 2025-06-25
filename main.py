@@ -168,6 +168,7 @@ class CouponScraper:
             coupons_updated = 0
             coupons_created = 0
             coupons_skipped_duplicates = 0
+            coupons_skipped_no_title = 0
 
             for shop_name, shop_data in data.items():
                 category = shop_categories.get(shop_name)
@@ -197,6 +198,12 @@ class CouponScraper:
                             cleaned_expiry = self.clean_expiry_date(coupon.get('expiryDate', ''))
                             cleaned_title = self.clean_title_text(coupon.get('title', ''))
                             cleaned_code = coupon.get('code', 'No code').strip()
+
+                            # Skip coupons with "No title found"
+                            if cleaned_title == 'No title' or cleaned_title == 'No title found':
+                                coupons_skipped_no_title += 1
+                                print(f"⚠️ Skipping coupon with no title (Code: {cleaned_code})")
+                                continue
 
                             # Create a unique key for this coupon (shop_id, code, title)
                             coupon_key = (shop_id, cleaned_code.lower(), cleaned_title.lower())
@@ -262,20 +269,21 @@ class CouponScraper:
             if stats_result.data:
                 stats = stats_result.data[0]
                 print(f"""
-📊 SCRAPING SUMMARY:
-   🏪 Shops processed: {shops_upserted}
-   🎫 Coupons processed: {coupons_upserted}
-   ✨ New coupons: {coupons_created}
-   🔄 Updated coupons: {coupons_updated}
-   ⚠️ Skipped duplicates: {coupons_skipped_duplicates}
+    📊 SCRAPING SUMMARY:
+       🏪 Shops processed: {shops_upserted}
+       🎫 Coupons processed: {coupons_upserted}
+       ✨ New coupons: {coupons_created}
+       🔄 Updated coupons: {coupons_updated}
+       ⚠️ Skipped duplicates: {coupons_skipped_duplicates}
+       🚫 Skipped no title: {coupons_skipped_no_title}
 
-📈 DATABASE TOTALS:
-   🏪 Total shops: {stats['total_shops']}
-   🎫 Total coupons: {stats['total_coupons']}
-   ✅ Active coupons: {stats['active_coupons']}
-   ❌ Inactive coupons: {stats['inactive_coupons']}
-   👤 User saved (public): {stats['user_saved_public_coupons']}
-   👤 User saved (private): {stats['user_saved_private_coupons']}
+    📈 DATABASE TOTALS:
+       🏪 Total shops: {stats['total_shops']}
+       🎫 Total coupons: {stats['total_coupons']}
+       ✅ Active coupons: {stats['active_coupons']}
+       ❌ Inactive coupons: {stats['inactive_coupons']}
+       👤 User saved (public): {stats['user_saved_public_coupons']}
+       👤 User saved (private): {stats['user_saved_private_coupons']}
                 """)
 
             print('✅ Successfully completed stable coupon matching!')
