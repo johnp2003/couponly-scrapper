@@ -20,7 +20,7 @@ class CouponScraper:
         self.gemini_api_key = os.getenv('GEMINI_API_KEY')
         self.shop_results = {}
         self.processed_shops = set()
-        self.max_shops = 2  # Testing with 10 shops only
+        self.max_shops = 20  # Testing with 10 shops only
 
         # Initialize Supabase client
         if self.supabase_url and self.supabase_key:
