@@ -265,6 +265,18 @@ class CouponScraper:
 
                             is_update = existing_coupon.data and len(existing_coupon.data) > 0
 
+                            # Check if coupon is expired
+                            is_expired = False
+                            if cleaned_expiry:
+                                try:
+                                    expiry_date_obj = datetime.strptime(cleaned_expiry, '%Y-%m-%d').date()
+                                    current_date = datetime.now().date()
+                                    is_expired = expiry_date_obj < current_date
+                                    if is_expired:
+                                        print(f"⏰ Coupon '{cleaned_title}' is expired (expires: {cleaned_expiry})")
+                                except Exception as e:
+                                    print(f"⚠️ Error parsing expiry date '{cleaned_expiry}': {e}")
+
                             # Prepare coupon data with embedding
                             coupon_data = {
                                 'p_shop_id': shop_id,
@@ -276,7 +288,8 @@ class CouponScraper:
                                 'p_source_url': coupon.get('url', ''),
                                 'p_category': category,
                                 'p_coupon_image_url': coupon.get('couponImageUrl', ''),
-                                'p_embedding': embedding  # Add embedding to the upsert
+                                'p_embedding': embedding,  # Add embedding to the upsert
+                                'p_is_active': not is_expired  # Set active status based on expiry
                             }
 
                             # Upsert coupon using the enhanced function
@@ -313,19 +326,28 @@ class CouponScraper:
                 print(f'🗑️ Deleted {deleted_count} inactive coupons')
                 print(f'🔒 Preserved {preserved_count} inactive coupons (user references)')
 
-            # Step 5: Get final statistics
+            # Step 5: Deactivate expired coupons
+            print('⏰ Deactivating expired coupons...')
+            expired_result = self.supabase.rpc('deactivate_expired_coupons').execute()
+            expired_count = 0
+            if expired_result.data and len(expired_result.data) > 0:
+                expired_count = expired_result.data[0]['deactivated_count']
+                print(f'⏰ Deactivated {expired_count} expired coupons')
+
+            # Step 6: Get final statistics
             stats_result = self.supabase.rpc('get_scraping_stats').execute()
             if stats_result.data:
                 stats = stats_result.data[0]
                 print(f"""
     📊 SCRAPING SUMMARY:
        🏪 Shops processed: {shops_upserted}
-       🎫 Coupons processed: {coupons_upserted}
+       � Couplons processed: {coupons_upserted}
        ✨ New coupons: {coupons_created}
        🔄 Updated coupons: {coupons_updated}
        🧠 Embeddings generated: {embeddings_generated}
        ⚠️ Skipped duplicates: {coupons_skipped_duplicates}
-       🚫 Skipped no title: {coupons_skipped_no_title}
+       � Skeipped no title: {coupons_skipped_no_title}
+       ⏰ Expired coupons deactivated: {expired_count}
 
     📈 DATABASE TOTALS:
        🏪 Total shops: {stats['total_shops']}
