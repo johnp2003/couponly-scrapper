@@ -146,8 +146,30 @@ class CouponScraper:
             print(f"Error categorizing shops with Gemini: {e}")
             return {}
 
+    async def generate_embedding(self, text: str) -> List[float]:
+        """Generate embedding for given text using Gemini"""
+        try:
+            # Clean and prepare text for embedding
+            clean_text = ' '.join(text.split())  # Remove extra whitespace
+            if not clean_text.strip():
+                return None
+
+            # Use Gemini's embedding model
+            embedding_model = genai.GenerativeModel('embedding-001')
+            result = embedding_model.embed_content(clean_text)
+
+            if result and hasattr(result, 'embedding') and hasattr(result.embedding, 'values'):
+                return result.embedding.values
+            else:
+                print(f"Warning: No embedding generated for text: {clean_text[:50]}...")
+                return None
+
+        except Exception as e:
+            print(f"Error generating embedding: {e}")
+            return None
+
     async def save_to_supabase_stable(self, data: Dict):
-        """Save scraped data to Supabase using stable coupon matching (Approach 1)"""
+        """Save scraped data to Supabase using stable coupon matching with embeddings"""
         try:
             print('🔗 Connected to Supabase')
 
@@ -169,6 +191,7 @@ class CouponScraper:
             coupons_created = 0
             coupons_skipped_duplicates = 0
             coupons_skipped_no_title = 0
+            embeddings_generated = 0
 
             for shop_name, shop_data in data.items():
                 category = shop_categories.get(shop_name)
@@ -217,14 +240,30 @@ class CouponScraper:
                             # Add to processed set
                             processed_coupon_keys.add(coupon_key)
 
+                            # Generate embedding for the coupon
+                            print(f"🧠 Generating embedding for: {cleaned_title}")
+                            embedding_text = ' '.join([
+                                cleaned_title,
+                                coupon.get('description', ''),
+                                category,
+                                coupon.get('termsAndConditions', '')
+                            ]).strip()
+
+                            embedding = await self.generate_embedding(embedding_text)
+                            if embedding:
+                                embeddings_generated += 1
+                                print(f"✅ Generated embedding ({len(embedding)} dimensions)")
+                            else:
+                                print(f"⚠️ Failed to generate embedding for: {cleaned_title}")
+
                             # Check if this is an existing coupon by trying to find it first
                             existing_coupon = self.supabase.table('coupons').select('id').eq('shop_id', shop_id).eq(
                                 'code', cleaned_code).eq('title', cleaned_title).execute()
 
                             is_update = existing_coupon.data and len(existing_coupon.data) > 0
 
-                            # Upsert coupon using the new function
-                            coupon_result = self.supabase.rpc('upsert_coupon', {
+                            # Prepare coupon data with embedding
+                            coupon_data = {
                                 'p_shop_id': shop_id,
                                 'p_title': cleaned_title,
                                 'p_code': cleaned_code,
@@ -233,8 +272,12 @@ class CouponScraper:
                                 'p_expiry_date': cleaned_expiry,
                                 'p_source_url': coupon.get('url', ''),
                                 'p_category': category,
-                                'p_coupon_image_url': coupon.get('couponImageUrl', '')
-                            }).execute()
+                                'p_coupon_image_url': coupon.get('couponImageUrl', ''),
+                                'p_embedding': embedding  # Add embedding to the upsert
+                            }
+
+                            # Upsert coupon using the enhanced function
+                            coupon_result = self.supabase.rpc('upsert_coupon_with_embedding', coupon_data).execute()
 
                             if coupon_result.data:
                                 coupons_upserted += 1
@@ -247,10 +290,13 @@ class CouponScraper:
                             else:
                                 print(f"❌ Failed to upsert coupon: {cleaned_title}")
 
-                    else:
-                        print(f"❌ Failed to upsert shop: {shop_name}")
+                            # Add small delay to respect API rate limits
+                            await asyncio.sleep(0.1)
 
-                except Exception as e:
+                        else:
+                            print(f"❌ Failed to upsert shop: {shop_name}")
+
+                    except Exception as e:
                     print(f"❌ Error processing shop '{shop_name}': {e}")
                     continue
 
@@ -274,6 +320,7 @@ class CouponScraper:
        🎫 Coupons processed: {coupons_upserted}
        ✨ New coupons: {coupons_created}
        🔄 Updated coupons: {coupons_updated}
+       🧠 Embeddings generated: {embeddings_generated}
        ⚠️ Skipped duplicates: {coupons_skipped_duplicates}
        🚫 Skipped no title: {coupons_skipped_no_title}
 
@@ -284,9 +331,9 @@ class CouponScraper:
        ❌ Inactive coupons: {stats['inactive_coupons']}
        👤 User saved (public): {stats['user_saved_public_coupons']}
        👤 User saved (private): {stats['user_saved_private_coupons']}
-                """)
+                    """)
 
-            print('✅ Successfully completed stable coupon matching!')
+            print('✅ Successfully completed stable coupon matching with embeddings!')
 
         except Exception as e:
             print(f'❌ Error during stable save to Supabase: {e}')
