@@ -154,12 +154,15 @@ class CouponScraper:
             if not clean_text.strip():
                 return None
 
-            # Use Gemini's embedding model
-            embedding_model = genai.GenerativeModel('embedding-001')
-            result = embedding_model.embed_content(clean_text)
+            # Use Gemini's embedding model directly with genai.embed_content
+            result = genai.embed_content(
+                model="models/text-embedding-004",  # Use the correct embedding model
+                content=clean_text,
+                task_type="semantic_similarity"  # Optional: specify the task type
+            )
 
-            if result and hasattr(result, 'embedding') and hasattr(result.embedding, 'values'):
-                return result.embedding.values
+            if result and 'embedding' in result:
+                return result['embedding']
             else:
                 print(f"Warning: No embedding generated for text: {clean_text[:50]}...")
                 return None
