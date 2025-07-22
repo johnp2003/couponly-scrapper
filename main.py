@@ -293,10 +293,10 @@ class CouponScraper:
                             # Add small delay to respect API rate limits
                             await asyncio.sleep(0.1)
 
-                        else:
-                            print(f"❌ Failed to upsert shop: {shop_name}")
+                    else:
+                        print(f"❌ Failed to upsert shop: {shop_name}")
 
-                    except Exception as e:
+                except Exception as e:
                     print(f"❌ Error processing shop '{shop_name}': {e}")
                     continue
 
@@ -331,7 +331,7 @@ class CouponScraper:
        ❌ Inactive coupons: {stats['inactive_coupons']}
        👤 User saved (public): {stats['user_saved_public_coupons']}
        👤 User saved (private): {stats['user_saved_private_coupons']}
-                    """)
+                """)
 
             print('✅ Successfully completed stable coupon matching with embeddings!')
 
