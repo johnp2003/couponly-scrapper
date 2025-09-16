@@ -174,17 +174,17 @@ class CouponScraper:
     async def save_to_supabase_stable(self, data: Dict):
         """Save scraped data to Supabase using stable coupon matching with embeddings"""
         try:
-            print('🔗 Connected to Supabase')
+            print('Connected to Supabase')
 
             # Step 1: Mark all existing coupons as inactive
-            print('🔄 Marking existing coupons as inactive...')
+            print('Marking existing coupons as inactive...')
             inactive_result = self.supabase.rpc('mark_all_coupons_inactive').execute()
             inactive_count = inactive_result.data if inactive_result.data else 0
-            print(f'📝 Marked {inactive_count} coupons as inactive')
+            print(f'Marked {inactive_count} coupons as inactive')
 
             # Step 2: Get shop categories from Gemini
             shop_names = list(data.keys())
-            print(f"🤖 Categorizing {len(shop_names)} shops with Gemini...")
+            print(f"Categorizing {len(shop_names)} shops with Gemini...")
             shop_categories = self.categorize_shops_with_gemini(shop_names)
 
             # Step 3: Process shops and coupons with upsert strategy
@@ -199,7 +199,7 @@ class CouponScraper:
             for shop_name, shop_data in data.items():
                 category = shop_categories.get(shop_name)
                 if not category:
-                    print(f"⚠️ Skipping shop '{shop_name}' due to missing category.")
+                    print(f"Warning: Skipping shop '{shop_name}' due to missing category.")
                     continue
 
                 try:
@@ -213,7 +213,7 @@ class CouponScraper:
                     if shop_result.data:
                         shop_id = shop_result.data
                         shops_upserted += 1
-                        print(f"🏪 Upserted shop: {shop_name} -> Category: {category}")
+                        print(f"Upserted shop: {shop_name} -> Category: {category}")
 
                         # Track processed coupons for this shop to prevent duplicates
                         processed_coupon_keys = set()
@@ -228,7 +228,7 @@ class CouponScraper:
                             # Skip coupons with "No title found"
                             if cleaned_title == 'No title' or cleaned_title == 'No title found':
                                 coupons_skipped_no_title += 1
-                                print(f"⚠️ Skipping coupon with no title (Code: {cleaned_code})")
+                                print(f"Warning: Skipping coupon with no title (Code: {cleaned_code})")
                                 continue
 
                             # Create a unique key for this coupon (shop_id, code, title)
@@ -237,14 +237,14 @@ class CouponScraper:
                             # Skip if we've already processed this exact coupon for this shop
                             if coupon_key in processed_coupon_keys:
                                 coupons_skipped_duplicates += 1
-                                print(f"⚠️ Skipping duplicate coupon: {cleaned_title} (Code: {cleaned_code})")
+                                print(f"Warning: Skipping duplicate coupon: {cleaned_title} (Code: {cleaned_code})")
                                 continue
 
                             # Add to processed set
                             processed_coupon_keys.add(coupon_key)
 
                             # Generate embedding for the coupon
-                            print(f"🧠 Generating embedding for: {cleaned_title}")
+                            print(f"Generating embedding for: {cleaned_title}")
                             embedding_text = ' '.join([
                                 cleaned_title,
                                 coupon.get('description', ''),
@@ -255,9 +255,9 @@ class CouponScraper:
                             embedding = await self.generate_embedding(embedding_text)
                             if embedding:
                                 embeddings_generated += 1
-                                print(f"✅ Generated embedding ({len(embedding)} dimensions)")
+                                print(f"Generated embedding ({len(embedding)} dimensions)")
                             else:
-                                print(f"⚠️ Failed to generate embedding for: {cleaned_title}")
+                                print(f"Warning: Failed to generate embedding for: {cleaned_title}")
 
                             # Check if this is an existing coupon by trying to find it first
                             existing_coupon = self.supabase.table('coupons').select('id').eq('shop_id', shop_id).eq(
@@ -273,9 +273,9 @@ class CouponScraper:
                                     current_date = datetime.now().date()
                                     is_expired = expiry_date_obj < current_date
                                     if is_expired:
-                                        print(f"⏰ Coupon '{cleaned_title}' is expired (expires: {cleaned_expiry})")
+                                        print(f"Coupon '{cleaned_title}' is expired (expires: {cleaned_expiry})")
                                 except Exception as e:
-                                    print(f"⚠️ Error parsing expiry date '{cleaned_expiry}': {e}")
+                                    print(f"Warning: Error parsing expiry date '{cleaned_expiry}': {e}")
 
                             # Prepare coupon data with embedding
                             coupon_data = {
@@ -299,69 +299,69 @@ class CouponScraper:
                                 coupons_upserted += 1
                                 if is_update:
                                     coupons_updated += 1
-                                    print(f"🔄 Updated existing coupon: {cleaned_title}")
+                                    print(f"Updated existing coupon: {cleaned_title}")
                                 else:
                                     coupons_created += 1
-                                    print(f"✨ Created new coupon: {cleaned_title}")
+                                    print(f"Created new coupon: {cleaned_title}")
                             else:
-                                print(f"❌ Failed to upsert coupon: {cleaned_title}")
+                                print(f"Failed to upsert coupon: {cleaned_title}")
 
                             # Add small delay to respect API rate limits
                             await asyncio.sleep(0.1)
 
                     else:
-                        print(f"❌ Failed to upsert shop: {shop_name}")
+                        print(f"Failed to upsert shop: {shop_name}")
 
                 except Exception as e:
-                    print(f"❌ Error processing shop '{shop_name}': {e}")
+                    print(f"Error processing shop '{shop_name}': {e}")
                     continue
 
             # Step 4: Clean up orphaned inactive coupons
-            print('🧹 Cleaning up inactive coupons...')
+            print('Cleaning up inactive coupons...')
             cleanup_result = self.supabase.rpc('cleanup_inactive_coupons').execute()
 
             if cleanup_result.data:
                 deleted_count = cleanup_result.data[0]['deleted_count']
                 preserved_count = cleanup_result.data[0]['preserved_count']
-                print(f'🗑️ Deleted {deleted_count} inactive coupons')
-                print(f'🔒 Preserved {preserved_count} inactive coupons (user references)')
+                print(f'Deleted {deleted_count} inactive coupons')
+                print(f'Preserved {preserved_count} inactive coupons (user references)')
 
             # Step 5: Deactivate expired coupons
-            print('⏰ Deactivating expired coupons...')
+            print('Deactivating expired coupons...')
             expired_result = self.supabase.rpc('deactivate_expired_coupons').execute()
             expired_count = 0
             if expired_result.data and len(expired_result.data) > 0:
                 expired_count = expired_result.data[0]['deactivated_count']
-                print(f'⏰ Deactivated {expired_count} expired coupons')
+                print(f'Deactivated {expired_count} expired coupons')
 
             # Step 6: Get final statistics
             stats_result = self.supabase.rpc('get_scraping_stats').execute()
             if stats_result.data:
                 stats = stats_result.data[0]
                 print(f"""
-    📊 SCRAPING SUMMARY:
-       🏪 Shops processed: {shops_upserted}
-       � Couplons processed: {coupons_upserted}
-       ✨ New coupons: {coupons_created}
-       🔄 Updated coupons: {coupons_updated}
-       🧠 Embeddings generated: {embeddings_generated}
-       ⚠️ Skipped duplicates: {coupons_skipped_duplicates}
-       � Skeipped no title: {coupons_skipped_no_title}
-       ⏰ Expired coupons deactivated: {expired_count}
+    SCRAPING SUMMARY:
+       Shops processed: {shops_upserted}
+       Coupons processed: {coupons_upserted}
+       New coupons: {coupons_created}
+       Updated coupons: {coupons_updated}
+       Embeddings generated: {embeddings_generated}
+       Skipped duplicates: {coupons_skipped_duplicates}
+       Skipped no title: {coupons_skipped_no_title}
+       Expired coupons deactivated: {expired_count}
 
-    📈 DATABASE TOTALS:
-       🏪 Total shops: {stats['total_shops']}
-       🎫 Total coupons: {stats['total_coupons']}
-       ✅ Active coupons: {stats['active_coupons']}
-       ❌ Inactive coupons: {stats['inactive_coupons']}
-       👤 User saved (public): {stats['user_saved_public_coupons']}
-       👤 User saved (private): {stats['user_saved_private_coupons']}
+    DATABASE TOTALS:
+       Total shops: {stats['total_shops']}
+       Total coupons: {stats['total_coupons']}
+       Active coupons: {stats['active_coupons']}
+       Inactive coupons: {stats['inactive_coupons']}
+       User saved (public): {stats['user_saved_public_coupons']}
+       User saved (private): {stats['user_saved_private_coupons']}
                 """)
 
-            print('✅ Successfully completed stable coupon matching with embeddings!')
+            print('Successfully completed stable coupon matching with embeddings!')
 
         except Exception as e:
-            print(f'❌ Error during stable save to Supabase: {e}')
+            print(f'Error during stable save to Supabase: {e}')
 
     async def scrape_coupons(self):
         """Main scraping function"""
